@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>データ移行</title>
+<style>
+  body { background:#0a0a0a; color:#f0f0f0; font-family:Georgia,serif; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+  .card { background:#141414; border:1px solid rgba(255,200,0,0.2); border-radius:20px; padding:40px; max-width:400px; width:90%; text-align:center; }
+  h2 { color:#ffc800; margin:0 0 8px; font-size:22px; }
+  p { color:rgba(255,255,255,0.4); font-size:13px; margin:0 0 32px; line-height:1.6; }
+  .btn { width:100%; padding:16px; background:#ffc800; border:none; border-radius:12px; color:#0a0a0a; font-size:16px; font-weight:bold; cursor:pointer; font-family:Georgia,serif; }
+  .btn:disabled { background:rgba(255,200,0,0.2); color:rgba(255,200,0,0.4); cursor:default; }
+  .result { margin-top:20px; padding:16px; border-radius:12px; font-size:14px; line-height:1.7; }
+  .success { background:rgba(0,255,136,0.08); border:1px solid rgba(0,255,136,0.2); color:#00ff88; }
+  .error { background:rgba(255,50,50,0.08); border:1px solid rgba(255,50,50,0.2); color:#ff5050; }
+  .item { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid rgba(255,255,255,0.06); font-size:13px; }
+  .item:last-child { border:none; }
+  .label { color:rgba(255,255,255,0.4); }
+  .val { color:#ffc800; font-weight:bold; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>📥 データ移行</h2>
+  <p>
+    2026年3月2日〜今日までの記録を<br>
+    トラッカーに一括インポートします
+  </p>
+
+  <div style="margin-bottom:24px;">
+    <div class="item"><span class="label">⚡ 腹筋ローラー</span><span class="val">1,100 回</span></div>
+    <div class="item"><span class="label">🔄 ツイストプランク</span><span class="val">460 回</span></div>
+    <div class="item"><span class="label">開始日</span><span class="val">2026年3月2日</span></div>
+  </div>
+
+<button class="btn" id="btn" onclick="importData()">インポートする</button>
+
+  <div id="result"></div>
+</div>
+
+<script>
+function importData() {
+  const btn = document.getElementById("btn");
+  const resultEl = document.getElementById("result");
+  btn.disabled = true;
+  btn.textContent = "処理中...";
+
+  try {
+    const STORAGE_KEY = "fitness-tracker-v2";
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const existing = raw ? JSON.parse(raw) : { menus: [], logs: [], activeMenuId: null };
+
+    // ---- メニュー定義 ----
+    const abMenu = {
+      id: "ab-roller",
+      name: "腹筋ローラー",
+      repsPerTap: 20,
+      icon: "⚡"
+    };
+    const twistMenu = {
+      id: "twist-plank",
+      name: "ツイストプランク",
+      repsPerTap: 20,
+      icon: "🔄"
+    };
+
+    // 既存メニューになければ追加
+    let menus = existing.menus && existing.menus.length > 0 ? [...existing.menus] : [
+      abMenu,
+      { id: "pushup", name: "腕立て伏せ", repsPerTap: 10, icon: "💪" },
+      { id: "squat", name: "スクワット", repsPerTap: 15, icon: "🦵" },
+    ];
+
+    if (!menus.find(m => m.id === "ab-roller")) menus.push(abMenu);
+    if (!menus.find(m => m.id === "twist-plank")) {
+      // 腕立てとスクワットの間に挿入
+      menus.push(twistMenu);
+    }
+
+    // ---- 日付生成: 2026-03-02 〜 今日まで ----
+    const start = new Date("2026-03-02");
+    const today = new Date();
+    today.setHours(0,0,0,0);
+
+    const days = [];
+    for (let d = new Date(start); d <= today; d.setDate(d.getDate()+1)) {
+      days.push(d.toISOString().slice(0,10));
+    }
+    const totalDays = days.length;
+
+    // ---- 腹筋ローラー 1100回 を日割り ----
+    const abTotal = 1100;
+    const twistTotal = 460;
+    const repsPerTap = 20;
+
+    // 日ごとにランダムに分配（自然な感じに）
+    function distributeReps(total, dates, repsPerTap) {
+      const logs = [];
+      let remaining = total;
+      for (let i = 0; i < dates.length; i++) {
+        if (remaining <= 0) break;
+        const isLast = i === dates.length - 1;
+        if (isLast) {
+          // 残りを全部
+          const sets = Math.ceil(remaining / repsPerTap);
+          for (let s = 0; s < sets; s++) {
+            logs.push({ date: dates[i], reps: Math.min(repsPerTap, remaining - s * repsPerTap) });
+          }
+          remaining = 0;
+        } else {
+          // 平均ベース ± ランダム（0〜2セット）
+          const avg = remaining / (dates.length - i);
+          const base = Math.max(0, Math.round(avg / repsPerTap));
+          const variation = Math.floor(Math.random() * 3) - 1; // -1,0,1
+          const sets = Math.max(0, base + variation);
+          const reps = Math.min(sets * repsPerTap, remaining);
+          if (reps > 0) {
+            // 1日分を1エントリ
+            logs.push({ date: dates[i], reps });
+          }
+          remaining -= reps;
+        }
+      }
+      return logs;
+    }
+
+    const abRawLogs = distributeReps(abTotal, days, repsPerTap);
+    const twistRawLogs = distributeReps(twistTotal, days, repsPerTap);
+
+    // ---- ログ整形 ----
+    const newLogs = [
+      ...abRawLogs.map(l => ({
+        id: `ab-import-${l.date}-${Math.random()}`,
+        menuId: "ab-roller",
+        date: l.date,
+        reps: l.reps,
+        ts: new Date(l.date).getTime(),
+      })),
+      ...twistRawLogs.map(l => ({
+        id: `twist-import-${l.date}-${Math.random()}`,
+        menuId: "twist-plank",
+        date: l.date,
+        reps: l.reps,
+        ts: new Date(l.date).getTime() + 1,
+      })),
+    ];
+
+    // 既存ログ（importでないもの）を保持してマージ
+    const existingLogs = (existing.logs || []).filter(l => !l.id.startsWith("ab-import-") && !l.id.startsWith("twist-import-"));
+    const mergedLogs = [...existingLogs, ...newLogs];
+
+    const saveData = {
+      menus,
+      logs: mergedLogs,
+      activeMenuId: existing.activeMenuId || "ab-roller",
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(saveData));
+
+    const abActual = newLogs.filter(l=>l.menuId==="ab-roller").reduce((s,l)=>s+l.reps,0);
+    const twActual = newLogs.filter(l=>l.menuId==="twist-plank").reduce((s,l)=>s+l.reps,0);
+
+    resultEl.innerHTML = `
+      <div class="result success">
+        ✅ インポート完了！<br><br>
+        ⚡ 腹筋ローラー：${abActual.toLocaleString()} 回<br>
+        🔄 ツイストプランク：${twActual.toLocaleString()} 回<br><br>
+        ${totalDays}日分に分散して記録しました。<br>
+        トラッカーに戻って確認してください！
+      </div>
+    `;
+    btn.textContent = "完了！";
+
+  } catch(e) {
+    resultEl.innerHTML = `<div class="result error">エラー: ${e.message}</div>`;
+    btn.disabled = false;
+    btn.textContent = "インポートする";
+  }
+}
+</script>
+
+</body>
+</html>
