@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="トレーニング">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <title>トレーニング記録</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #0a0a0a; color: #f0f0f0; font-family: 'Georgia', serif; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
+    #root { min-height: 100%; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; }
+    button { font-family: 'Georgia', serif; cursor: pointer; border: none; background: none; }
+    input { font-family: 'Georgia', serif; outline: none; border: none; }
+    ::-webkit-scrollbar { display: none; }
+
+    @keyframes flashPulse {
+      0%   { transform: scale(1);    box-shadow: 0 0   0px rgba(255,200,0,0); }
+      40%  { transform: scale(0.95); box-shadow: 0 0  60px rgba(255,200,0,0.5); }
+      100% { transform: scale(1);    box-shadow: 0 0   0px rgba(255,200,0,0); }
+    }
+    @keyframes slideUp     { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes slideUpFade { from { opacity:0; transform:translate(-50%,12px); } to { opacity:1; transform:translate(-50%,0); } }
+    @keyframes slideUpModal{ from { transform:translateY(100%); } to { transform:translateY(0); } }
+    @keyframes fadeIn      { from { opacity:0; } to { opacity:1; } }
+
+    .view { animation: fadeIn .25s ease; }
+    .row-item:active { background: rgba(255,255,255,0.05) !important; }
+    .tap-btn:active .tap-circle { transform: scale(0.94); }
+
+    /* Tab nav bottom */
+    .tab-bar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: center; z-index: 50; padding-bottom: env(safe-area-inset-bottom); background: rgba(10,10,10,0.92); backdrop-filter: blur(16px); border-top: 1px solid rgba(255,255,255,0.07); }
+    .tab-bar-inner { display: flex; width: 100%; max-width: 480px; }
+    .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 10px 0 8px; color: rgba(255,255,255,0.3); font-size: 10px; letter-spacing: 1px; transition: color .2s; }
+    .tab-item.active { color: #ffc800; }
+    .tab-icon { font-size: 20px; line-height: 1; }
+
+    .scroll-area { width: 100%; max-width: 480px; padding: 0 18px; flex: 1; overflow-y: auto; padding-bottom: calc(80px + env(safe-area-inset-bottom)); }
+
+    .menu-chip { flex-shrink: 0; padding: 8px 16px; border-radius: 20px; font-size: 13px; white-space: nowrap; transition: all .2s; }
+    .sort-btn  { padding: 6px 18px; border-radius: 20px; font-size: 13px; transition: all .15s; }
+    .modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.72); display: flex; align-items: flex-end; justify-content: center; animation: fadeIn .2s ease; }
+    .modal-sheet { width: 100%; max-width: 480px; background: #141414; border-radius: 24px 24px 0 0; padding: 28px 22px; padding-bottom: calc(28px + env(safe-area-inset-bottom)); animation: slideUpModal .3s cubic-bezier(.22,1,.36,1); max-height: 85vh; overflow-y: auto; }
+    .toast { position: fixed; bottom: calc(90px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: #1e1e1e; border: 1px solid rgba(255,200,0,.3); border-radius: 12px; padding: 12px 20px; font-size: 14px; color: #ffc800; z-index: 200; animation: slideUpFade .3s ease; white-space: nowrap; box-shadow: 0 8px 32px rgba(0,0,0,.6); }
+
+    .icon-btn { width:40px; height:40px; font-size:20px; border-radius:10px; transition: background .15s; }
+    .stat-card { background: linear-gradient(135deg,#1a1a0f,#1e1800); border: 1px solid rgba(255,200,0,.15); border-radius: 18px; padding: 20px 16px; display: flex; justify-content: space-around; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const STORAGE_KEY = "fitness-tracker-v2";
+const DEFAULT_MENUS = [
+  { id:"ab-roller",   name:"腹筋ローラー",   repsPerTap:20, icon:"⚡" },
+  { id:"pushup",      name:"腕立て伏せ",      repsPerTap:10, icon:"💪" },
+  { id:"squat",       name:"スクワット",      repsPerTap:15, icon:"🦵" },
+];
+const ICONS = ["⚡","💪","🦵","🏋️","🤸","🧘","🏃","🚴","🤾","🏊","🥊","🧗","🔥","⭐","💥"];
+
+function getToday() { return new Date().toISOString().slice(0,10); }
+function fmtDate(s,mode){const[y,m,d]=s.split("-");if(mode==="day")return`${y}年${+m}月${+d}日`;if(mode==="month")return`${y}年${+m}月`;return`${y}年`;}
+function gKey(s,mode){const[y,m]=s.split("-");if(mode==="month")return`${y}-${m}`;if(mode==="year")return y;return s;}
+function load(){try{const r=localStorage.getItem(STORAGE_KEY);return r?JSON.parse(r):null;}catch{return null;}}
+function save(d){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(d));}catch{}}
+
+/* ── Toast ── */
+function Toast({msg,onDone}){
+  useEffect(()=>{const t=setTimeout(onDone,2600);return()=>clearTimeout(t);},[]);
+  return <div className="toast">{msg}</div>;
+}
+
+/* ── Modal ── */
+function Modal({title,onClose,children}){
+  return(
+    <div className="modal-backdrop" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal-sheet">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+          <span style={{fontSize:17,fontWeight:"bold"}}>{title}</span>
+          <button onClick={onClose} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.08)",color:"#fff",fontSize:18}}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ── App ── */
+function App(){
+  const [menus,setMenus]   = useState(DEFAULT_MENUS);
+  const [logs,setLogs]     = useState([]);
+  const [activeId,setActiveId] = useState(DEFAULT_MENUS[0].id);
+  const [view,setView]     = useState("home");
+  const [sortMode,setSortMode] = useState("day");
+  const [flash,setFlash]   = useState(false);
+  const [toast,setToast]   = useState(null);
+  const [showEditor,setShowEditor] = useState(false);
+  const [editMenu,setEditMenu]     = useState(null);
+  const [editName,setEditName]     = useState("");
+  const [editReps,setEditReps]     = useState("10");
+  const [editIcon,setEditIcon]     = useState("🏋️");
+  const [delLog,setDelLog]         = useState(null);
+
+  /* load */
+  useEffect(()=>{
+    const d=load();
+    if(d){
+      if(d.menus) setMenus(d.menus);
+      if(d.logs)  setLogs(d.logs);
+      if(d.activeMenuId) setActiveId(d.activeMenuId);
+    }
+  },[]);
+
+  /* save */
+  useEffect(()=>{ save({menus,logs,activeMenuId:activeId}); },[menus,logs,activeId]);
+
+  const active   = menus.find(m=>m.id===activeId)||menus[0];
+  const mLogs    = logs.filter(l=>l.menuId===activeId);
+  const todayRep = mLogs.filter(l=>l.date===getToday()).reduce((s,l)=>s+l.reps,0);
+  const totalRep = mLogs.reduce((s,l)=>s+l.reps,0);
+
+  /* stats grouping */
+  const grouped = (()=>{
+    const map={};
+    mLogs.forEach(e=>{const k=gKey(e.date,sortMode);map[k]=(map[k]||0)+e.reps;});
+    return Object.entries(map).sort((a,b)=>b[0].localeCompare(a[0]));
+  })();
+  const maxVal = grouped.length ? Math.max(...grouped.map(g=>g[1])) : 1;
+
+  /* handlers */
+  const handleAdd = useCallback(()=>{
+    if(!active) return;
+    const entry={id:`${Date.now()}-${Math.random()}`,menuId:activeId,date:getToday(),reps:active.repsPerTap,ts:Date.now()};
+    setLogs(p=>[...p,entry]);
+    setFlash(true); setTimeout(()=>setFlash(false),600);
+    setToast(`+${active.repsPerTap}回 記録しました`);
+  },[active,activeId]);
+
+  const confirmDelLog = ()=>{
+    if(!delLog) return;
+    setLogs(p=>p.filter(l=>l.id!==delLog.id));
+    setDelLog(null); setToast("記録を削除しました");
+  };
+
+  const openNew = ()=>{setEditMenu(null);setEditName("");setEditReps("10");setEditIcon("🏋️");setShowEditor(true);};
+  const openEdit = m=>{setEditMenu(m);setEditName(m.name);setEditReps(String(m.repsPerTap));setEditIcon(m.icon);setShowEditor(true);};
+
+  const saveMenu = ()=>{
+    const name=editName.trim(); const reps=parseInt(editReps);
+    if(!name||isNaN(reps)||reps<1) return;
+    if(editMenu){
+      setMenus(p=>p.map(m=>m.id===editMenu.id?{...m,name,repsPerTap:reps,icon:editIcon}:m));
+      setToast("メニューを更新しました");
+    } else {
+      const nm={id:`menu-${Date.now()}`,name,repsPerTap:reps,icon:editIcon};
+      setMenus(p=>[...p,nm]); setActiveId(nm.id); setToast("メニューを追加しました");
+    }
+    setShowEditor(false);
+  };
+
+  const delMenu = id=>{
+    if(menus.length<=1){setToast("最低1つ必要です");return;}
+    setMenus(p=>p.filter(m=>m.id!==id));
+    setLogs(p=>p.filter(l=>l.menuId!==id));
+    if(activeId===id) setActiveId(menus.find(m=>m.id!==id)?.id);
+    setToast("メニューを削除しました");
+  };
+
+  const moveMenu = (i,dir)=>{
+    const n=[...menus]; const t=i+dir;
+    if(t<0||t>=n.length) return;
+    [n[i],n[t]]=[n[t],n[i]]; setMenus(n);
+  };
+
+  /* ── render ── */
+  return(
+    <>
+      {/* Header */}
+      <div style={{width:"100%",maxWidth:480,padding:"calc(env(safe-area-inset-top) + 20px) 18px 0",display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
+        <div>
+          <div style={{fontSize:10,letterSpacing:5,color:"rgba(255,255,255,.22)",marginBottom:3}}>FITNESS</div>
+          <div style={{fontSize:22,fontWeight:"bold"}}>トレーニング記録</div>
+        </div>
+      </div>
+
+      {/* Menu chips (home/stats) */}
+      {(view==="home"||view==="stats")&&(
+        <div style={{width:"100%",maxWidth:480,display:"flex",gap:8,padding:"16px 18px 0",overflowX:"auto"}}>
+          {menus.map(m=>(
+            <button key={m.id} className="menu-chip"
+              onClick={()=>setActiveId(m.id)}
+              style={{
+                border: activeId===m.id?"1px solid rgba(255,200,0,.5)":"1px solid rgba(255,255,255,.1)",
+                background: activeId===m.id?"rgba(255,200,0,.12)":"transparent",
+                color: activeId===m.id?"#ffc800":"rgba(255,255,255,.38)",
+              }}>
+              {m.icon} {m.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Scroll area */}
+      <div className="scroll-area" style={{paddingTop:16}}>
+
+        {/* ── HOME ── */}
+        {view==="home"&&active&&(
+          <div className="view">
+            {/* Stat card */}
+            <div className="stat-card" style={{marginBottom:24}}>
+              {[{l:"今日",v:todayRep},{l:"合計",v:totalRep},{l:"記録数",v:`${mLogs.length}回`}].map(({l,v})=>(
+                <div key={l} style={{textAlign:"center"}}>
+                  <div style={{fontSize:10,letterSpacing:3,color:"rgba(255,200,0,.5)",marginBottom:3}}>{l}</div>
+                  <div style={{fontSize:24,fontWeight:"bold",color:"#ffc800"}}>{typeof v==="number"?v.toLocaleString():v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Big tap button */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",marginBottom:32}}>
+              <button className="tap-btn" onClick={handleAdd} style={{background:"none",border:"none",marginBottom:10}}>
+                <div className="tap-circle" style={{
+                  width:160,height:160,borderRadius:"50%",
+                  border:"2px solid rgba(255,200,0,.4)",
+                  background:flash?"rgba(255,200,0,.22)":"rgba(255,200,0,.06)",
+                  animation:flash?"flashPulse .6s ease":"none",
+                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,
+                  transition:"background .2s",
+                }}>
+                  <div style={{fontSize:42,lineHeight:1}}>{active.icon}</div>
+                  <div style={{fontSize:28,fontWeight:"bold",color:"#ffc800"}}>+{active.repsPerTap}</div>
+                  <div style={{fontSize:11,color:"rgba(255,200,0,.5)",letterSpacing:2}}>回</div>
+                </div>
+              </button>
+              <div style={{fontSize:10,letterSpacing:3,color:"rgba(255,255,255,.18)"}}>TAP TO LOG</div>
+            </div>
+
+            {/* Recent log */}
+            <div style={{fontSize:10,letterSpacing:4,color:"rgba(255,255,255,.22)",marginBottom:12}}>最近の記録</div>
+            {mLogs.length===0
+              ?<div style={{color:"rgba(255,255,255,.15)",fontSize:14,textAlign:"center",padding:"24px 0"}}>まだ記録がありません</div>
+              :[...mLogs].reverse().slice(0,12).map((e,i)=>{
+                const[y,mo,d]=e.date.split("-");
+                return(
+                  <div key={e.id} className="row-item" style={{
+                    display:"flex",justifyContent:"space-between",alignItems:"center",
+                    padding:"12px 8px",borderBottom:"1px solid rgba(255,255,255,.05)",
+                    borderRadius:8,transition:"background .15s",
+                    animation:`slideUp .3s ease ${i*.04}s both`,
+                  }}>
+                    <div style={{fontSize:13,color:"rgba(255,255,255,.45)"}}>{`${y}年${+mo}月${+d}日`}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{fontSize:16,fontWeight:"bold",color:"#ffc800"}}>+{e.reps}回</div>
+                      <button onClick={()=>setDelLog(e)} style={{
+                        padding:"4px 10px",borderRadius:8,fontSize:12,
+                        background:"rgba(255,60,60,.1)",border:"1px solid rgba(255,60,60,.25)",color:"rgba(255,80,80,.75)",
+                      }}>削除</button>
+                    </div>
+                  </div>
+                );
+              })
+            }
+          </div>
+        )}
+
+        {/* ── STATS ── */}
+        {view==="stats"&&(
+          <div className="view">
+            <div style={{display:"flex",gap:8,marginBottom:22}}>
+              {[["day","日別"],["month","月別"],["year","年別"]].map(([v,l])=>(
+                <button key={v} className="sort-btn" onClick={()=>setSortMode(v)} style={{
+                  background:sortMode===v?"rgba(255,200,0,.15)":"rgba(255,255,255,.05)",
+                  border:sortMode===v?"1px solid rgba(255,200,0,.4)":"1px solid rgba(255,255,255,.08)",
+                  color:sortMode===v?"#ffc800":"rgba(255,255,255,.38)",
+                }}>{l}</button>
+              ))}
+            </div>
+
+            {grouped.length===0
+              ?<div style={{color:"rgba(255,255,255,.15)",fontSize:14,textAlign:"center",padding:"40px 0"}}>まだデータがありません</div>
+              :<div style={{display:"flex",flexDirection:"column",gap:14}}>
+                {grouped.map(([key,val],i)=>(
+                  <div key={key} style={{animation:`slideUp .3s ease ${i*.04}s both`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                      <span style={{fontSize:13,color:"rgba(255,255,255,.42)"}}>{fmtDate(key+(key.length===4?"-01-01":key.length===7?"-01":""),sortMode)}</span>
+                      <span style={{fontSize:14,fontWeight:"bold",color:"#ffc800"}}>{val.toLocaleString()} 回</span>
+                    </div>
+                    <div style={{height:8,background:"rgba(255,255,255,.06)",borderRadius:4,overflow:"hidden"}}>
+                      <div style={{height:"100%",borderRadius:4,background:"linear-gradient(90deg,#ffc800,#ff8c00)",width:`${(val/maxVal)*100}%`,transition:"width .6s cubic-bezier(.22,1,.36,1)"}}/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            }
+
+            {grouped.length>0&&(
+              <div style={{marginTop:28,padding:18,borderRadius:14,background:"rgba(255,200,0,.05)",border:"1px solid rgba(255,200,0,.1)",display:"flex",justifyContent:"space-around"}}>
+                {[{l:"合計",v:`${totalRep.toLocaleString()}回`},{l:"セット数",v:`${mLogs.length}回`},{l:"平均",v:`${Math.round(totalRep/Math.max(grouped.length,1)).toLocaleString()}回`}].map(({l,v})=>(
+                  <div key={l} style={{textAlign:"center"}}>
+                    <div style={{fontSize:10,color:"rgba(255,255,255,.28)",letterSpacing:2,marginBottom:3}}>{l}</div>
+                    <div style={{fontSize:17,fontWeight:"bold",color:"#ffc800"}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── SETTINGS ── */}
+        {view==="settings"&&(
+          <div className="view">
+            <div style={{fontSize:10,letterSpacing:4,color:"rgba(255,255,255,.22)",marginBottom:14}}>メニュー管理</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:18}}>
+              {menus.map((m,idx)=>(
+                <div key={m.id} style={{display:"flex",alignItems:"center",gap:10,padding:"14px 14px",borderRadius:14,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)"}}>
+                  {/* sort arrows */}
+                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                    {[[-1,"▲"],[1,"▼"]].map(([dir,icon])=>{
+                      const disabled=(dir===-1&&idx===0)||(dir===1&&idx===menus.length-1);
+                      return(
+                        <button key={dir} onClick={()=>moveMenu(idx,dir)} style={{
+                          width:26,height:26,borderRadius:6,fontSize:12,lineHeight:1,
+                          background:disabled?"rgba(255,255,255,.03)":"rgba(255,255,255,.08)",
+                          color:disabled?"rgba(255,255,255,.14)":"rgba(255,255,255,.6)",
+                          cursor:disabled?"default":"pointer",
+                        }}>{icon}</button>
+                      );
+                    })}
+                  </div>
+                  <div style={{fontSize:26}}>{m.icon}</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:"bold",marginBottom:2}}>{m.name}</div>
+                    <div style={{fontSize:11,color:"rgba(255,200,0,.6)"}}>1タップ = {m.repsPerTap}回</div>
+                  </div>
+                  <button onClick={()=>openEdit(m)} style={{padding:"6px 12px",borderRadius:8,fontSize:12,background:"rgba(255,200,0,.1)",border:"1px solid rgba(255,200,0,.3)",color:"#ffc800"}}>編集</button>
+                  <button onClick={()=>delMenu(m.id)} style={{padding:"6px 10px",borderRadius:8,fontSize:12,background:"rgba(255,50,50,.08)",border:"1px solid rgba(255,50,50,.2)",color:"rgba(255,80,80,.72)"}}>削除</button>
+                </div>
+              ))}
+            </div>
+            <button onClick={openNew} style={{width:"100%",padding:16,borderRadius:14,background:"rgba(255,200,0,.07)",border:"1px dashed rgba(255,200,0,.35)",color:"#ffc800",fontSize:15}}>
+              ＋ メニューを追加
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Bottom Tab Bar ── */}
+      <div className="tab-bar">
+        <div className="tab-bar-inner">
+          {[{v:"home",icon:"🏠",l:"記録"},{v:"stats",icon:"📊",l:"統計"},{v:"settings",icon:"⚙️",l:"設定"}].map(({v,icon,l})=>(
+            <button key={v} className={`tab-item${view===v?" active":""}`} onClick={()=>setView(v)}>
+              <span className="tab-icon">{icon}</span>
+              <span>{l}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Menu Editor Modal ── */}
+      {showEditor&&(
+        <Modal title={editMenu?"メニューを編集":"メニューを追加"} onClose={()=>setShowEditor(false)}>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.28)",letterSpacing:3,marginBottom:8}}>アイコン</div>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+              {ICONS.map(ic=>(
+                <button key={ic} className="icon-btn" onClick={()=>setEditIcon(ic)} style={{
+                  background:editIcon===ic?"rgba(255,200,0,.25)":"rgba(255,255,255,.06)",
+                  outline:editIcon===ic?"2px solid rgba(255,200,0,.6)":"none",
+                }}>{ic}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.28)",letterSpacing:3,marginBottom:8}}>メニュー名</div>
+            <input value={editName} onChange={e=>setEditName(e.target.value)} placeholder="例：腹筋ローラー"
+              style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,color:"#fff",fontSize:15}}/>
+          </div>
+          <div style={{marginBottom:24}}>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.28)",letterSpacing:3,marginBottom:8}}>1タップの回数</div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <button onClick={()=>setEditReps(r=>String(Math.max(1,+r-1)))} style={{width:40,height:40,borderRadius:10,background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",color:"#fff",fontSize:20}}>−</button>
+              <input value={editReps} onChange={e=>setEditReps(e.target.value.replace(/[^0-9]/g,""))}
+                style={{flex:1,padding:12,textAlign:"center",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,color:"#ffc800",fontSize:24,fontWeight:"bold"}}/>
+              <button onClick={()=>setEditReps(r=>String(+r+1))} style={{width:40,height:40,borderRadius:10,background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",color:"#fff",fontSize:20}}>＋</button>
+            </div>
+          </div>
+          <button onClick={saveMenu} style={{
+            width:"100%",padding:16,borderRadius:12,fontSize:16,fontWeight:"bold",
+            background:editName.trim()&&+editReps>0?"#ffc800":"rgba(255,200,0,.18)",
+            color:editName.trim()&&+editReps>0?"#0a0a0a":"rgba(255,200,0,.38)",
+          }}>{editMenu?"変更を保存":"追加する"}</button>
+        </Modal>
+      )}
+
+      {/* ── Delete log confirm ── */}
+      {delLog&&(
+        <Modal title="記録を削除" onClose={()=>setDelLog(null)}>
+          <div style={{color:"rgba(255,255,255,.48)",fontSize:14,marginBottom:24,lineHeight:1.7}}>
+            {(()=>{const[y,m,d]=delLog.date.split("-");return`${y}年${+m}月${+d}日の +${delLog.reps}回`;})()}の記録を削除しますか？
+          </div>
+          <div style={{display:"flex",gap:12}}>
+            <button onClick={()=>setDelLog(null)} style={{flex:1,padding:14,borderRadius:12,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.45)",fontSize:15}}>キャンセル</button>
+            <button onClick={confirmDelLog} style={{flex:1,padding:14,borderRadius:12,background:"rgba(255,50,50,.15)",border:"1px solid rgba(255,50,50,.3)",color:"#ff5050",fontSize:15,fontWeight:"bold"}}>削除する</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Toast ── */}
+      {toast&&<Toast msg={toast} onDone={()=>setToast(null)}/>}
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+
+<script>
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("sw.js").catch(()=>{});
+  }
+</script>
+</body>
+</html>
